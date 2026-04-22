@@ -53,6 +53,6 @@ npm run deploy
 
 - move from `ALLOWED_ORIGINS=*` to an explicit allowlist
 - add turnstile or another anti-bot layer to registration
-- replace access codes with paid checkout
+- replace access codes with paid checkout or tighten the Buy Me a Coffee webhook flow
 - rotate admin tokens regularly
 - add Worker Analytics Engine or another metrics sink

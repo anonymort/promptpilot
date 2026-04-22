@@ -11,6 +11,8 @@ function createEnv(overrides = {}) {
     ANTHROPIC_API_KEY: "",
     ANTHROPIC_MODEL: "claude-sonnet-4-6",
     ADMIN_BEARER_TOKEN: "admin-token",
+    BUYMEACOFFEE_WEBHOOK_SECRET: "bmc-secret",
+    BUYMEACOFFEE_PAGE_URL: "https://buymeacoffee.com/promptpilot",
     ALLOWED_ORIGINS: "*",
     ...overrides
   };
@@ -44,6 +46,36 @@ async function registerUser(env, email) {
   assert.equal(response.status, 200);
   assert.equal(json.ok, true);
   return json;
+}
+
+async function signWebhookPayload(secret, payload) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function callBuyMeACoffeeWebhook(env, payload) {
+  const raw = JSON.stringify(payload);
+  const signature = await signWebhookPayload(env.BUYMEACOFFEE_WEBHOOK_SECRET, raw);
+  const request = new Request("https://example.test/api/webhooks/buymeacoffee", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-signature-sha256": signature
+    },
+    body: raw
+  });
+
+  const response = await worker.fetch(request, env);
+  const json = await response.json();
+  return { response, json };
 }
 
 async function insertAccessCode(env, code, { plan = "starter", months = 12 } = {}) {
@@ -87,7 +119,7 @@ test("single-use access codes cannot be redeemed twice under competing requests"
   assert.ok(claims.results[0].granted_at);
 });
 
-test("quota reservation blocks an extra concurrent enhance request at the monthly limit", async () => {
+test("free plan is limited to 2 enhancements per day", async () => {
   const env = createEnv();
   const user = await registerUser(env, "quota@example.com");
 
@@ -96,10 +128,9 @@ test("quota reservation blocks an extra concurrent enhance request at the monthl
   `).bind("quota@example.com").first();
 
   const periodStart = new Date();
-  periodStart.setUTCDate(1);
   periodStart.setUTCHours(0, 0, 0, 0);
 
-  for (let slot = 1; slot <= 9; slot += 1) {
+  for (let slot = 1; slot <= 1; slot += 1) {
     await env.DB.prepare(`
       INSERT INTO usage_reservations (id, user_id, period_start, slot_number, status, created_at, consumed_at)
       VALUES (?, ?, ?, ?, 'consumed', ?, ?)
@@ -126,10 +157,13 @@ test("quota reservation blocks an extra concurrent enhance request at the monthl
   const [first, second] = await Promise.all([makeEnhance(), makeEnhance()]);
   const statuses = [first.response.status, second.response.status].sort((a, b) => a - b);
   assert.deepEqual(statuses, [200, 403]);
+  assert.equal(second.json.error, "Daily usage limit reached");
 
   const usage = await callApi(env, "/api/me", { token: user.token });
-  assert.equal(usage.json.usage.usedThisMonth, 10);
-  assert.equal(usage.json.usage.remainingThisMonth, 0);
+  assert.equal(usage.json.usage.window, "day");
+  assert.equal(usage.json.usage.limit, 2);
+  assert.equal(usage.json.usage.used, 2);
+  assert.equal(usage.json.usage.remaining, 0);
 });
 
 test("failed provider calls return a sanitized server error and release the reserved slot", async () => {
@@ -164,9 +198,80 @@ test("failed provider calls return a sanitized server error and release the rese
     assert.equal(result.json.error, "Unexpected server error");
 
     const me = await callApi(env, "/api/me", { token: user.token });
-    assert.equal(me.json.usage.usedThisMonth, 0);
+    assert.equal(me.json.usage.used, 0);
   } finally {
     globalThis.fetch = originalFetch;
     console.error = originalConsoleError;
   }
+});
+
+test("successful Buy Me a Coffee support unlocks the supporter plan by matching email", async () => {
+  const env = createEnv();
+  const user = await registerUser(env, "supporter@example.com");
+
+  const webhook = await callBuyMeACoffeeWebhook(env, {
+    id: "evt_support_123",
+    type: "support.created",
+    status: "completed",
+    supporter_email: "supporter@example.com",
+    amount: "5.00",
+    currency: "USD"
+  });
+
+  assert.equal(webhook.response.status, 200);
+  assert.equal(webhook.json.action, "granted_supporter");
+
+  const me = await callApi(env, "/api/me", { token: user.token });
+  assert.equal(me.response.status, 200);
+  assert.equal(me.json.user.plan, "supporter");
+  assert.equal(me.json.usage.isUnlimited, true);
+  assert.equal(me.json.billing.buyMeACoffeeUrl, "https://buymeacoffee.com/promptpilot");
+});
+
+test("Buy Me a Coffee succeeded status is treated as a successful donation", async () => {
+  const env = createEnv();
+  const user = await registerUser(env, "succeeded@example.com");
+
+  const webhook = await callBuyMeACoffeeWebhook(env, {
+    id: "evt_support_succeeded",
+    type: "donation.created",
+    status: "succeeded",
+    supporter_email: "succeeded@example.com",
+    amount: "5.00",
+    currency: "USD"
+  });
+
+  assert.equal(webhook.response.status, 200);
+  assert.equal(webhook.json.action, "granted_supporter");
+
+  const me = await callApi(env, "/api/me", { token: user.token });
+  assert.equal(me.response.status, 200);
+  assert.equal(me.json.user.plan, "supporter");
+  assert.equal(me.json.usage.isUnlimited, true);
+});
+
+test("duplicate Buy Me a Coffee webhooks are accepted without reprocessing", async () => {
+  const env = createEnv();
+  await registerUser(env, "repeat@example.com");
+
+  const payload = {
+    id: "evt_support_456",
+    type: "support.created",
+    status: "completed",
+    supporter_email: "repeat@example.com"
+  };
+
+  const first = await callBuyMeACoffeeWebhook(env, payload);
+  const second = await callBuyMeACoffeeWebhook(env, payload);
+
+  assert.equal(first.response.status, 200);
+  assert.equal(second.response.status, 200);
+  assert.equal(second.json.duplicate, true);
+
+  const row = await env.DB.prepare(`
+    SELECT COUNT(*) AS count
+    FROM buymeacoffee_events
+    WHERE source_event_id = ?
+  `).bind("evt_support_456").first();
+  assert.equal(row.count, 1);
 });

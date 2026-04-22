@@ -2,4 +2,6 @@ ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-sonnet-4-6
 USE_MOCK=true
 ADMIN_BEARER_TOKEN=replace-with-a-long-random-string
+BUYMEACOFFEE_PAGE_URL=https://buymeacoffee.com/your-page
+BUYMEACOFFEE_WEBHOOK_SECRET=replace-with-your-buymeacoffee-webhook-secret
 ALLOWED_ORIGINS=*

@@ -1,10 +1,16 @@
 name = "promptpilot-api"
 main = "src/index.js"
 compatibility_date = "2026-04-21"
+workers_dev = true
+preview_urls = true
+
+[vars]
+USE_MOCK = "false"
+ALLOWED_ORIGINS = "*"
+BUYMEACOFFEE_PAGE_URL = "https://buymeacoffee.com/mattkneale"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "promptpilot-db"
 database_id = "0351705b-08af-4848-8d51-02aca89c31af"
-preview_database_id = "promptpilot-db-preview"
 migrations_dir = "migrations"

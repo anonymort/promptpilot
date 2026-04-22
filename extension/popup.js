@@ -1,14 +1,22 @@
 import { createApiError, shouldClearStoredToken } from "./popup-logic.js";
 
 const DRAFT_STORAGE_KEY = "promptDraft";
+const DEFAULT_API_BASE = "https://promptpilot-api.promptpilot.workers.dev";
+const LEGACY_API_BASES = new Set([
+  "http://127.0.0.1:8787",
+  "http://localhost:8787"
+]);
 
 const state = {
   apiBase: "",
   token: "",
   currentUser: null,
   currentTab: null,
+  buyMeACoffeeUrl: "",
   listenersBound: false,
-  targetFrameId: null
+  targetFrameId: null,
+  busy: new Set(),
+  apiBaseStatusTimer: null
 };
 
 const els = {
@@ -16,6 +24,7 @@ const els = {
   apiBase: document.getElementById("apiBase"),
   saveApiBaseBtn: document.getElementById("saveApiBaseBtn"),
   apiBaseStatus: document.getElementById("apiBaseStatus"),
+  workflowHint: document.getElementById("workflowHint"),
   showLoginBtn: document.getElementById("showLoginBtn"),
   showRegisterBtn: document.getElementById("showRegisterBtn"),
   loginForm: document.getElementById("loginForm"),
@@ -26,9 +35,15 @@ const els = {
   loginPassword: document.getElementById("loginPassword"),
   registerEmail: document.getElementById("registerEmail"),
   registerPassword: document.getElementById("registerPassword"),
+  loginSubmitBtn: document.getElementById("loginSubmitBtn"),
+  registerSubmitBtn: document.getElementById("registerSubmitBtn"),
   accountEmail: document.getElementById("accountEmail"),
   accountPlan: document.getElementById("accountPlan"),
   accountUsage: document.getElementById("accountUsage"),
+  supporterCard: document.getElementById("supporterCard"),
+  supporterCardLabel: document.getElementById("supporterCardLabel"),
+  supporterCardCopy: document.getElementById("supporterCardCopy"),
+  supporterLinkBtn: document.getElementById("supporterLinkBtn"),
   redeemCode: document.getElementById("redeemCode"),
   redeemBtn: document.getElementById("redeemBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
@@ -36,15 +51,16 @@ const els = {
   mode: document.getElementById("mode"),
   readBtn: document.getElementById("readBtn"),
   enhanceBtn: document.getElementById("enhanceBtn"),
+  copyBtn: document.getElementById("copyBtn"),
   insertBtn: document.getElementById("insertBtn"),
   sourcePrompt: document.getElementById("sourcePrompt"),
   enhancedPrompt: document.getElementById("enhancedPrompt"),
   status: document.getElementById("status")
 };
 
-function setStatus(message, isError = false) {
+function setStatus(message, tone = "neutral") {
   els.status.textContent = message;
-  els.status.style.color = isError ? "#ef4444" : "";
+  els.status.dataset.tone = tone;
 }
 
 function validationMessageFor(form) {
@@ -58,6 +74,25 @@ function setAuthView(isSignedIn) {
   els.accountSection.classList.toggle("hidden", !isSignedIn);
   els.authBadge.textContent = isSignedIn ? "Signed in" : "Signed out";
   els.authBadge.className = isSignedIn ? "badge badge--ok" : "badge badge--muted";
+  updateUiState();
+}
+
+function formatUsage(usage) {
+  if (!usage || typeof usage !== "object") return "—";
+  if (usage.isUnlimited) return "Unlimited";
+  if (typeof usage.used !== "number" || typeof usage.limit !== "number") return "—";
+  if (usage.window === "day") return `${usage.used} / ${usage.limit} today`;
+  if (usage.window === "month") return `${usage.used} / ${usage.limit} this month`;
+  return `${usage.used} / ${usage.limit}`;
+}
+
+function formatPlan(plan, planExpiresAt) {
+  if (!plan) return "—";
+  if (plan === "supporter") return "Supporter (unlimited)";
+  if (planExpiresAt) {
+    return `${plan} until ${new Date(planExpiresAt).toLocaleDateString()}`;
+  }
+  return plan;
 }
 
 function showLogin() {
@@ -146,25 +181,177 @@ async function apiFetch(path, options = {}) {
   return json;
 }
 
+function isSupportedTab(tab = state.currentTab) {
+  return Boolean(tab?.id && /^https?:\/\//i.test(tab.url || ""));
+}
+
+function describeCurrentSite(tab = state.currentTab) {
+  if (!tab?.url) return "No active tab";
+
+  try {
+    const url = new URL(tab.url);
+    if (/^https?:$/i.test(url.protocol)) {
+      return url.hostname || "Current site";
+    }
+    if (url.protocol === "chrome:") return "Chrome page";
+    if (url.protocol === "edge:") return "Browser page";
+    return "Unsupported tab";
+  } catch {
+    return "Tab unavailable";
+  }
+}
+
+function currentSiteKey() {
+  if (!state.currentTab?.url) return "manual";
+
+  try {
+    const url = new URL(state.currentTab.url);
+    if (!/^https?:$/i.test(url.protocol)) return "manual";
+    return (url.hostname || "manual").replace(/^www\./, "");
+  } catch {
+    return "manual";
+  }
+}
+
+function setBusy(key, isActive) {
+  if (isActive) {
+    state.busy.add(key);
+  } else {
+    state.busy.delete(key);
+  }
+  updateUiState();
+}
+
+function isBusy(key) {
+  return state.busy.has(key);
+}
+
+async function withBusy(key, fn) {
+  setBusy(key, true);
+  try {
+    return await fn();
+  } finally {
+    setBusy(key, false);
+  }
+}
+
+function flashApiBaseStatus(message) {
+  els.apiBaseStatus.textContent = message;
+  if (state.apiBaseStatusTimer) {
+    window.clearTimeout(state.apiBaseStatusTimer);
+  }
+  state.apiBaseStatusTimer = window.setTimeout(() => {
+    els.apiBaseStatus.textContent = "";
+    state.apiBaseStatusTimer = null;
+  }, 1500);
+}
+
+function updateButtonLabels() {
+  els.readBtn.textContent = isBusy("read") ? "Reading..." : "1. Read from page";
+  els.enhanceBtn.textContent = isBusy("enhance") ? "Enhancing..." : "2. Enhance";
+  els.copyBtn.textContent = isBusy("copy") ? "Copying..." : "Copy result";
+  els.insertBtn.textContent = isBusy("insert") ? "Inserting..." : "3. Insert into page";
+  els.loginSubmitBtn.textContent = isBusy("login") ? "Logging in..." : "Log in";
+  els.registerSubmitBtn.textContent = isBusy("register") ? "Creating account..." : "Create account";
+  els.redeemBtn.textContent = isBusy("redeem") ? "Redeeming..." : "Redeem";
+  els.logoutBtn.textContent = isBusy("logout") ? "Logging out..." : "Logout";
+  els.saveApiBaseBtn.textContent = isBusy("saveApiBase") ? "Saving..." : "Save";
+}
+
+function updateWorkflowHint({
+  hasSavedApiBase,
+  hasSource,
+  hasEnhanced,
+  hasEditableTab,
+  hasToken
+}) {
+  if (!hasSavedApiBase) {
+    els.workflowHint.textContent = "Add an API base URL in Connection settings to enable sign-in and enhancement.";
+    return;
+  }
+
+  if (!hasEditableTab) {
+    els.workflowHint.textContent = "You can still paste and enhance a prompt here, but switch to a regular website tab to read from or insert into the page.";
+    return;
+  }
+
+  if (!hasToken) {
+    els.workflowHint.textContent = "Capture or paste a prompt now, then sign in below to unlock enhancement.";
+    return;
+  }
+
+  if (!hasSource) {
+    els.workflowHint.textContent = "Read the active field or paste a prompt to start.";
+    return;
+  }
+
+  if (!hasEnhanced) {
+    els.workflowHint.textContent = "Run an enhancement, then review the result before you copy or insert it.";
+    return;
+  }
+
+  els.workflowHint.textContent = "Your enhanced prompt is ready to copy or send back into the page.";
+}
+
+function updateUiState() {
+  const hasSavedApiBase = Boolean(state.apiBase);
+  const hasEditableTab = isSupportedTab();
+  const hasSource = Boolean(els.sourcePrompt.value.trim());
+  const hasEnhanced = Boolean(els.enhancedPrompt.value.trim());
+  const hasRedeemCode = Boolean(els.redeemCode.value.trim());
+  const hasToken = Boolean(state.token);
+  const hasSupporterLink = Boolean(state.buyMeACoffeeUrl);
+  const isSupporter = state.currentUser?.plan === "supporter";
+  const apiBaseInput = els.apiBase.value.trim();
+  const canSaveApiBase = Boolean(apiBaseInput) &&
+    els.apiBase.checkValidity() &&
+    apiBaseInput !== state.apiBase;
+
+  updateButtonLabels();
+
+  els.readBtn.disabled = !hasEditableTab || isBusy("read");
+  els.enhanceBtn.disabled = !hasSavedApiBase || !hasToken || !hasSource || isBusy("enhance");
+  els.copyBtn.disabled = !hasEnhanced || isBusy("copy");
+  els.insertBtn.disabled = !hasEditableTab || !hasEnhanced || isBusy("insert");
+  els.loginSubmitBtn.disabled = !hasSavedApiBase || isBusy("login");
+  els.registerSubmitBtn.disabled = !hasSavedApiBase || isBusy("register");
+  els.redeemBtn.disabled = !hasRedeemCode || isBusy("redeem");
+  els.logoutBtn.disabled = isBusy("logout");
+  els.saveApiBaseBtn.disabled = !canSaveApiBase || isBusy("saveApiBase");
+  els.supporterCard.classList.toggle("hidden", !hasToken || !hasSupporterLink);
+  els.supporterCard.classList.toggle("supporter-card--active", isSupporter);
+  els.supporterCardLabel.textContent = isSupporter ? "Supporter unlocked" : "Unlimited";
+  els.supporterCardCopy.textContent = isSupporter
+    ? "Thank you for your support. Unlimited usage is now unlocked on this account."
+    : "Donate on Buy Me a Coffee using this same email to unlock unlimited usage automatically.";
+  els.supporterLinkBtn.textContent = isSupporter ? "View page" : "Buy unlimited";
+  els.supporterLinkBtn.disabled = !hasSupporterLink;
+
+  updateWorkflowHint({
+    hasSavedApiBase,
+    hasSource,
+    hasEnhanced,
+    hasEditableTab,
+    hasToken
+  });
+}
+
 async function refreshCurrentTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     state.currentTab = tab || null;
-    if (!tab?.url) {
-      els.currentSite.textContent = "No active tab";
-      return;
-    }
-
-    const hostname = new URL(tab.url).hostname;
-    els.currentSite.textContent = hostname;
+    els.currentSite.textContent = describeCurrentSite(state.currentTab);
   } catch {
+    state.currentTab = null;
     els.currentSite.textContent = "Tab unavailable";
   }
+  updateUiState();
 }
 
 async function refreshMe() {
   if (!state.token || !state.apiBase) {
     state.currentUser = null;
+    state.buyMeACoffeeUrl = "";
     setAuthView(false);
     return;
   }
@@ -172,21 +359,25 @@ async function refreshMe() {
   try {
     const data = await apiFetch("/api/me", { method: "GET" });
     state.currentUser = data.user;
+    state.buyMeACoffeeUrl = data.billing?.buyMeACoffeeUrl || "";
     setAuthView(true);
     els.accountEmail.textContent = data.user.email;
-    els.accountPlan.textContent = data.user.plan + (data.user.planExpiresAt ? ` until ${new Date(data.user.planExpiresAt).toLocaleDateString()}` : "");
-    els.accountUsage.textContent = `${data.usage.usedThisMonth} / ${data.usage.monthlyLimit}`;
+    els.accountPlan.textContent = formatPlan(data.user.plan, data.user.planExpiresAt);
+    els.accountUsage.textContent = formatUsage(data.usage);
   } catch (error) {
-    console.warn(error);
     if (shouldClearStoredToken(error)) {
       state.currentUser = null;
       state.token = "";
+      state.buyMeACoffeeUrl = "";
       await saveLocal({ token: "" });
       setAuthView(false);
+      setStatus("Session expired. Log in again.", "neutral");
       return;
     }
-    setStatus(error.message || "Could not refresh account.", true);
+    console.warn(error);
+    setStatus(error.message || "Could not refresh account.", "error");
   }
+  updateUiState();
 }
 
 async function injectAndRun(func, args = [], options = {}) {
@@ -458,106 +649,168 @@ function pageInsertEnhancedPrompt(text) {
   return { ok: true };
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const { selectionStart, selectionEnd } = els.enhancedPrompt;
+  els.enhancedPrompt.focus();
+  els.enhancedPrompt.select();
+  const copied = typeof document.execCommand === "function" && document.execCommand("copy");
+
+  if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+    els.enhancedPrompt.setSelectionRange(selectionStart, selectionEnd);
+  }
+
+  if (!copied) {
+    throw new Error("Copy failed. Select the text manually and copy it.");
+  }
+}
+
 async function handleLogin(event) {
   event.preventDefault();
   if (!els.loginForm.reportValidity()) {
-    setStatus(validationMessageFor(els.loginForm), true);
+    setStatus(validationMessageFor(els.loginForm), "error");
     return;
   }
 
   try {
-    setStatus("Logging in...");
-    const data = await apiFetch("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({
-        email: els.loginEmail.value,
-        password: els.loginPassword.value
-      })
+    await withBusy("login", async () => {
+      setStatus("Logging in...");
+      const data = await apiFetch("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: els.loginEmail.value,
+          password: els.loginPassword.value
+        })
+      });
+      state.token = data.token;
+      await saveLocal({ token: state.token });
+      els.loginPassword.value = "";
+      await refreshMe();
+      await saveDraft();
+      setStatus("Logged in.", "success");
     });
-    state.token = data.token;
-    await saveLocal({ token: state.token });
-    await refreshMe();
-    await saveDraft();
-    setStatus("Logged in.");
   } catch (error) {
-    setStatus(error.message, true);
+    setStatus(error.message, "error");
   }
 }
 
 async function handleRegister(event) {
   event.preventDefault();
   if (!els.registerForm.reportValidity()) {
-    setStatus(validationMessageFor(els.registerForm), true);
+    setStatus(validationMessageFor(els.registerForm), "error");
     return;
   }
 
   try {
-    setStatus("Creating account...");
-    const data = await apiFetch("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({
-        email: els.registerEmail.value,
-        password: els.registerPassword.value
-      })
+    await withBusy("register", async () => {
+      setStatus("Creating account...");
+      const data = await apiFetch("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          email: els.registerEmail.value,
+          password: els.registerPassword.value
+        })
+      });
+      state.token = data.token;
+      await saveLocal({ token: state.token });
+      els.registerPassword.value = "";
+      await refreshMe();
+      await saveDraft();
+      setStatus("Account created.", "success");
     });
-    state.token = data.token;
-    await saveLocal({ token: state.token });
-    await refreshMe();
-    await saveDraft();
-    setStatus("Account created.");
   } catch (error) {
-    setStatus(error.message, true);
+    setStatus(error.message, "error");
   }
 }
 
 async function handleRedeem() {
   try {
-    const data = await apiFetch("/api/redeem", {
-      method: "POST",
-      body: JSON.stringify({ code: els.redeemCode.value })
+    const code = els.redeemCode.value.trim();
+    if (!code) throw new Error("Enter an access code first.");
+
+    await withBusy("redeem", async () => {
+      setStatus("Redeeming...");
+      const data = await apiFetch("/api/redeem", {
+        method: "POST",
+        body: JSON.stringify({ code })
+      });
+      els.redeemCode.value = "";
+      await refreshMe();
+      setStatus(`Code redeemed. Plan is now ${data.user.plan}.`, "success");
     });
-    els.redeemCode.value = "";
-    await refreshMe();
-    setStatus(`Code redeemed. Plan is now ${data.user.plan}.`);
   } catch (error) {
-    setStatus(error.message, true);
+    setStatus(error.message, "error");
   }
 }
 
 async function handleLogout() {
-  try {
-    if (state.token) {
-      await apiFetch("/api/auth/logout", { method: "POST" });
+  await withBusy("logout", async () => {
+    try {
+      if (state.token) {
+        await apiFetch("/api/auth/logout", { method: "POST" });
+      }
+    } catch (error) {
+      console.warn(error);
+    } finally {
+      state.token = "";
+      state.currentUser = null;
+      state.buyMeACoffeeUrl = "";
+      await saveLocal({ token: "" });
+      showLogin();
+      setAuthView(false);
+      setStatus("Logged out.", "success");
     }
+  });
+}
+
+function handleOpenSupporterLink() {
+  if (!state.buyMeACoffeeUrl) return;
+  chrome.tabs.create({ url: state.buyMeACoffeeUrl });
+}
+
+async function handleCopy() {
+  try {
+    const text = els.enhancedPrompt.value.trim();
+    if (!text) throw new Error("No enhanced prompt to copy.");
+
+    await withBusy("copy", async () => {
+      await copyTextToClipboard(text);
+      setStatus("Enhanced prompt copied.", "success");
+    });
   } catch (error) {
-    console.warn(error);
-  } finally {
-    state.token = "";
-    state.currentUser = null;
-    await saveLocal({ token: "" });
-    setAuthView(false);
-    setStatus("Logged out.");
+    setStatus(error.message, "error");
   }
 }
 
 async function handleRead() {
   try {
-    const results = await injectAndRun(pageReadFocusedField, [], { allFrames: true });
-    const best = results
-      .filter((entry) => entry?.result?.ok)
-      .sort((a, b) => (b.result.score || 0) - (a.result.score || 0))[0];
-
-    if (!best) {
-      const firstError = results.find((entry) => entry?.result?.error)?.result?.error;
-      throw new Error(firstError || "Could not read the field");
+    if (!isSupportedTab()) {
+      throw new Error("Switch to a regular website tab to read from the page.");
     }
 
-    state.targetFrameId = best.frameId;
-    els.sourcePrompt.value = best.result.value || "";
-    await saveDraft();
-    setStatus("Focused field captured.");
+    await withBusy("read", async () => {
+      const results = await injectAndRun(pageReadFocusedField, [], { allFrames: true });
+      const best = results
+        .filter((entry) => entry?.result?.ok)
+        .sort((a, b) => (b.result.score || 0) - (a.result.score || 0))[0];
+
+      if (!best) {
+        const firstError = results.find((entry) => entry?.result?.error)?.result?.error;
+        throw new Error(firstError || "Could not read the field.");
+      }
+
+      state.targetFrameId = best.frameId;
+      els.sourcePrompt.value = best.result.value || "";
+      updateUiState();
+      await saveDraft();
+      setStatus("Focused field captured.", "success");
+    });
   } catch (error) {
-    setStatus(error.message, true);
+    setStatus(error.message, "error");
   }
 }
 
@@ -567,27 +820,27 @@ async function handleEnhance() {
     const prompt = els.sourcePrompt.value.trim();
     if (!prompt) throw new Error("Paste a prompt or read a focused field first.");
 
-    const hostname = state.currentTab?.url ? new URL(state.currentTab.url).hostname : "unknown";
-    const site = hostname.replace(/^www\./, "");
+    await withBusy("enhance", async () => {
+      setStatus("Enhancing...");
+      const data = await apiFetch("/api/enhance", {
+        method: "POST",
+        body: JSON.stringify({
+          site: currentSiteKey(),
+          mode: els.mode.value,
+          prompt
+        })
+      });
 
-    setStatus("Enhancing...");
-    const data = await apiFetch("/api/enhance", {
-      method: "POST",
-      body: JSON.stringify({
-        site,
-        mode: els.mode.value,
-        prompt
-      })
+      els.enhancedPrompt.value = data.enhancedPrompt || "";
+      if (state.currentUser && data.usage) {
+        els.accountUsage.textContent = formatUsage(data.usage);
+      }
+      updateUiState();
+      await saveDraft();
+      setStatus("Enhanced prompt ready.", "success");
     });
-
-    els.enhancedPrompt.value = data.enhancedPrompt || "";
-    if (state.currentUser) {
-      els.accountUsage.textContent = `${data.usage.usedThisMonth} / ${data.usage.monthlyLimit}`;
-    }
-    await saveDraft();
-    setStatus("Enhanced prompt ready.");
   } catch (error) {
-    setStatus(error.message, true);
+    setStatus(error.message, "error");
   }
 }
 
@@ -595,30 +848,49 @@ async function handleInsert() {
   try {
     const text = els.enhancedPrompt.value.trim();
     if (!text) throw new Error("No enhanced prompt to insert.");
-    let results = [];
-
-    if (typeof state.targetFrameId === "number") {
-      results = await injectAndRun(pageInsertEnhancedPrompt, [text], {
-        frameIds: [state.targetFrameId]
-      });
+    if (!isSupportedTab()) {
+      throw new Error("Switch to a regular website tab to insert into the page.");
     }
 
-    let success = results.find((entry) => entry?.result?.ok);
-    if (!success) {
-      results = await injectAndRun(pageInsertEnhancedPrompt, [text], { allFrames: true });
-      success = results.find((entry) => entry?.result?.ok);
-    }
+    await withBusy("insert", async () => {
+      let results = [];
 
-    if (!success) {
-      const firstError = results.find((entry) => entry?.result?.error)?.result?.error;
-      throw new Error(firstError || "Insert failed");
-    }
+      if (typeof state.targetFrameId === "number") {
+        results = await injectAndRun(pageInsertEnhancedPrompt, [text], {
+          frameIds: [state.targetFrameId]
+        });
+      }
 
-    state.targetFrameId = success.frameId;
-    await saveDraft();
-    setStatus("Inserted into page.");
+      let success = results.find((entry) => entry?.result?.ok);
+      if (!success) {
+        results = await injectAndRun(pageInsertEnhancedPrompt, [text], { allFrames: true });
+        success = results.find((entry) => entry?.result?.ok);
+      }
+
+      if (!success) {
+        const firstError = results.find((entry) => entry?.result?.error)?.result?.error;
+        throw new Error(firstError || "Insert failed.");
+      }
+
+      state.targetFrameId = success.frameId;
+      await saveDraft();
+      setStatus("Inserted into page.", "success");
+    });
   } catch (error) {
-    setStatus(error.message, true);
+    setStatus(error.message, "error");
+  }
+}
+
+function handlePromptShortcut(event) {
+  if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") return;
+  event.preventDefault();
+
+  if (event.currentTarget === els.sourcePrompt && !els.enhanceBtn.disabled) {
+    void handleEnhance();
+  }
+
+  if (event.currentTarget === els.enhancedPrompt && !els.insertBtn.disabled) {
+    void handleInsert();
   }
 }
 
@@ -632,21 +904,40 @@ function bindEventListeners() {
   els.registerForm.addEventListener("submit", handleRegister);
   els.redeemBtn.addEventListener("click", handleRedeem);
   els.logoutBtn.addEventListener("click", handleLogout);
+  els.supporterLinkBtn.addEventListener("click", handleOpenSupporterLink);
   els.readBtn.addEventListener("click", handleRead);
   els.enhanceBtn.addEventListener("click", handleEnhance);
+  els.copyBtn.addEventListener("click", handleCopy);
   els.insertBtn.addEventListener("click", handleInsert);
-  els.mode.addEventListener("change", saveDraft);
-  els.sourcePrompt.addEventListener("input", saveDraft);
-  els.enhancedPrompt.addEventListener("input", saveDraft);
+  els.mode.addEventListener("change", () => {
+    updateUiState();
+    void saveDraft();
+  });
+  els.sourcePrompt.addEventListener("input", () => {
+    updateUiState();
+    void saveDraft();
+  });
+  els.enhancedPrompt.addEventListener("input", () => {
+    updateUiState();
+    void saveDraft();
+  });
+  els.sourcePrompt.addEventListener("keydown", handlePromptShortcut);
+  els.enhancedPrompt.addEventListener("keydown", handlePromptShortcut);
+  els.redeemCode.addEventListener("input", updateUiState);
+  els.apiBase.addEventListener("input", updateUiState);
 
   els.saveApiBaseBtn.addEventListener("click", async () => {
-    state.apiBase = els.apiBase.value.trim();
-    await saveLocal({ apiBase: state.apiBase });
-    els.apiBaseStatus.textContent = "Saved";
-    setTimeout(() => {
-      els.apiBaseStatus.textContent = "";
-    }, 1200);
-    await refreshMe();
+    try {
+      await withBusy("saveApiBase", async () => {
+        state.apiBase = els.apiBase.value.trim();
+        await saveLocal({ apiBase: state.apiBase });
+        flashApiBaseStatus("Saved");
+        await refreshMe();
+        setStatus("Connection saved.", "success");
+      });
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
   });
 }
 
@@ -655,26 +946,34 @@ async function init() {
   bindEventListeners();
 
   const local = await loadLocal(["apiBase", "token", DRAFT_STORAGE_KEY]);
-  state.apiBase = local.apiBase || "http://127.0.0.1:8787";
+  const savedApiBase = String(local.apiBase || "").trim();
+  const shouldMigrateApiBase = !savedApiBase || LEGACY_API_BASES.has(savedApiBase);
+
+  state.apiBase = shouldMigrateApiBase ? DEFAULT_API_BASE : savedApiBase;
   state.token = local.token || "";
+
+  if (shouldMigrateApiBase) {
+    await saveLocal({ apiBase: state.apiBase });
+  }
 
   els.apiBase.value = state.apiBase;
   restoreDraft(local[DRAFT_STORAGE_KEY]);
+  updateUiState();
 
   await refreshCurrentTab();
   await refreshMe();
 }
 
 window.addEventListener("error", (event) => {
-  setStatus(event.message || "Popup error", true);
+  setStatus(event.message || "Popup error", "error");
 });
 
 window.addEventListener("unhandledrejection", (event) => {
   const message = event.reason?.message || "Unexpected popup error";
-  setStatus(message, true);
+  setStatus(message, "error");
 });
 
 init().catch((error) => {
   console.error(error);
-  setStatus(error.message, true);
+  setStatus(error.message, "error");
 });

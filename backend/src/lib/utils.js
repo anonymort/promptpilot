@@ -9,6 +9,12 @@ export function startOfCurrentUtcMonthIso(date = new Date()) {
   return d.toISOString();
 }
 
+export function startOfCurrentUtcDayIso(date = new Date()) {
+  const d = new Date(date);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
 export function addMonths(date, months) {
   const d = new Date(date);
   d.setUTCMonth(d.getUTCMonth() + months);

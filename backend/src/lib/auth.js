@@ -28,7 +28,7 @@ export function randomToken(size = 32) {
   return bytesToBase64Url(bytes);
 }
 
-async function pbkdf2(password, saltBytes, iterations = 120000) {
+async function pbkdf2(password, saltBytes, iterations = 100000) {
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(password),
@@ -110,6 +110,7 @@ export async function authenticateRequest(env, request) {
       users.email,
       users.plan,
       users.plan_expires_at,
+      users.donation_unlocked_at,
       users.status,
       sessions.id AS session_id,
       sessions.expires_at AS session_expires_at
@@ -128,8 +129,13 @@ export async function authenticateRequest(env, request) {
   }
 
   let effectivePlan = row.plan || "free";
+  if (row.donation_unlocked_at) {
+    effectivePlan = "supporter";
+  }
   if (row.plan_expires_at && new Date(row.plan_expires_at) <= now && effectivePlan !== "free") {
-    effectivePlan = "free";
+    if (!row.donation_unlocked_at) {
+      effectivePlan = "free";
+    }
     await env.DB.prepare(`
       UPDATE users
       SET plan = 'free', plan_expires_at = NULL, updated_at = ?

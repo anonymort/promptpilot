@@ -1,11 +1,28 @@
 import { enhancePrompt } from "./lib/anthropic.js";
-import { authenticateRequest, createPasswordRecord, createSession, deleteSession, verifyPassword } from "./lib/auth.js";
+import {
+  authenticateRequest,
+  createPasswordRecord,
+  createSession,
+  deleteSession,
+  sha256,
+  verifyPassword
+} from "./lib/auth.js";
+import {
+  beginWebhookEvent,
+  classifyWebhookAction,
+  extractWebhookSummary,
+  findUserByEmail,
+  finishWebhookEvent,
+  grantDonationUnlock,
+  revokeDonationUnlock,
+  verifyWebhookSignature
+} from "./lib/buymeacoffee.js";
 import { redeemAccessCode } from "./lib/codes.js";
 import { getCorsHeaders, handleCors } from "./lib/cors.js";
-import { getPlanLimit } from "./lib/plans.js";
+import { buildUsageSummary, getPlanQuota } from "./lib/plans.js";
 import {
   consumeUsageReservation,
-  getMonthlyUsageCount,
+  getUsageCount,
   releaseUsageReservation,
   reserveUsageSlot
 } from "./lib/usage.js";
@@ -15,6 +32,7 @@ import {
   cleanSite,
   forbidden,
   isStrongEnoughPassword,
+  isUniqueConstraintError,
   isValidEmail,
   json,
   methodNotAllowed,
@@ -27,6 +45,22 @@ import {
   trimPrompt,
   unauthorized
 } from "./lib/utils.js";
+
+function usageLimitMessage(quota) {
+  if (quota.window === "day") return "Daily usage limit reached";
+  if (quota.window === "month") return "Monthly usage limit reached";
+  return "Usage limit reached";
+}
+
+function usagePayloadFor(plan, used) {
+  const usage = buildUsageSummary(plan, used);
+  return {
+    ...usage,
+    usedThisMonth: usage.window === "month" ? usage.used : null,
+    remainingThisMonth: usage.window === "month" ? usage.remaining : null,
+    monthlyLimit: usage.window === "month" ? usage.limit : null
+  };
+}
 
 async function getUserByEmail(env, email) {
   return await env.DB.prepare(`SELECT * FROM users WHERE email = ? LIMIT 1`).bind(email).first();
@@ -134,7 +168,7 @@ async function route(request, env) {
       user: {
         id: user.id,
         email: user.email,
-        plan: user.plan,
+        plan: user.donation_unlocked_at ? "supporter" : user.plan,
         planExpiresAt: user.plan_expires_at
       }
     });
@@ -155,8 +189,8 @@ async function route(request, env) {
     const user = await authenticateRequest(env, request);
     if (!user) return unauthorized();
 
-    const usageThisMonth = await getMonthlyUsageCount(env, user.id);
-    const monthlyLimit = getPlanLimit(user.plan);
+    const quota = getPlanQuota(user.plan);
+    const usageCount = quota.limit === null ? 0 : await getUsageCount(env, user.id, quota.window);
 
     return json({
       ok: true,
@@ -167,10 +201,9 @@ async function route(request, env) {
         planExpiresAt: user.planExpiresAt,
         status: user.status
       },
-      usage: {
-        monthlyLimit,
-        usedThisMonth: usageThisMonth,
-        remainingThisMonth: Math.max(0, monthlyLimit - usageThisMonth)
+      usage: usagePayloadFor(user.plan, usageCount),
+      billing: {
+        buyMeACoffeeUrl: env.BUYMEACOFFEE_PAGE_URL || ""
       }
     });
   }
@@ -189,6 +222,63 @@ async function route(request, env) {
     const result = await redeemAccessCode(env, user, code);
     if (result instanceof Response) return result;
     return json(result);
+  }
+
+  if (path === "/api/webhooks/buymeacoffee") {
+    if (request.method !== "POST") return methodNotAllowed();
+    if (!env.BUYMEACOFFEE_WEBHOOK_SECRET) {
+      return forbidden("Buy Me a Coffee webhook is not configured");
+    }
+
+    const rawBody = await request.text();
+    const signature = request.headers.get("x-signature-sha256") || "";
+    const isValid = await verifyWebhookSignature(env.BUYMEACOFFEE_WEBHOOK_SECRET, rawBody, signature);
+    if (!isValid) {
+      return unauthorized("Invalid Buy Me a Coffee signature");
+    }
+
+    let payload;
+    try {
+      payload = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      return badRequest("Invalid webhook payload");
+    }
+
+    const summary = extractWebhookSummary(payload);
+    const eventKey = summary.eventId || await sha256(rawBody);
+
+    try {
+      await beginWebhookEvent(env, eventKey, summary, rawBody);
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return json({ ok: true, duplicate: true });
+      }
+      throw error;
+    }
+
+    const action = classifyWebhookAction(summary);
+    const matchedUser = await findUserByEmail(env, summary.email);
+    let finalAction = "ignored";
+
+    if (!matchedUser) {
+      finalAction = summary.email ? "ignored_no_matching_user" : "ignored_no_email";
+    } else if (action === "grant") {
+      await grantDonationUnlock(env, matchedUser.id, eventKey);
+      finalAction = "granted_supporter";
+    } else if (action === "revoke") {
+      await revokeDonationUnlock(env, matchedUser.id);
+      finalAction = "revoked_supporter";
+    }
+
+    await finishWebhookEvent(env, eventKey, {
+      matchedUserId: matchedUser?.id || null,
+      action: finalAction
+    });
+
+    return json({
+      ok: true,
+      action: finalAction
+    });
   }
 
   if (path === "/api/enhance") {
@@ -211,11 +301,13 @@ async function route(request, env) {
       return badRequest("Mode is invalid");
     }
 
-    const usageThisMonth = await getMonthlyUsageCount(env, user.id);
-    const monthlyLimit = getPlanLimit(user.plan);
+    const quota = getPlanQuota(user.plan);
+    const usageCount = quota.limit === null ? 0 : await getUsageCount(env, user.id, quota.window);
 
-    const reservation = await reserveUsageSlot(env, user.id, monthlyLimit);
-    if (!reservation) return forbidden("Monthly usage limit reached");
+    const reservation = quota.limit === null ? null : await reserveUsageSlot(env, user.id, quota);
+    if (quota.limit !== null && !reservation) {
+      return forbidden(usageLimitMessage(quota));
+    }
 
     let enhancedPrompt = "";
 
@@ -230,20 +322,20 @@ async function route(request, env) {
         outputChars: enhancedPrompt.length
       });
 
-      await consumeUsageReservation(env, reservation.id);
+      if (reservation) {
+        await consumeUsageReservation(env, reservation.id);
+      }
     } catch (error) {
-      await releaseUsageReservation(env, reservation.id);
+      if (reservation) {
+        await releaseUsageReservation(env, reservation.id);
+      }
       throw error;
     }
 
     return json({
       ok: true,
       enhancedPrompt,
-      usage: {
-        monthlyLimit,
-        usedThisMonth: usageThisMonth + 1,
-        remainingThisMonth: Math.max(0, monthlyLimit - (usageThisMonth + 1))
-      }
+      usage: usagePayloadFor(user.plan, quota.limit === null ? 0 : usageCount + 1)
     });
   }
 

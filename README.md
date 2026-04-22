@@ -70,6 +70,8 @@ ANTHROPIC_API_KEY=your_key_here
 ANTHROPIC_MODEL=claude-sonnet-4-6
 USE_MOCK=false
 ADMIN_BEARER_TOKEN=choose-a-long-random-admin-token
+BUYMEACOFFEE_PAGE_URL=https://buymeacoffee.com/your-page
+BUYMEACOFFEE_WEBHOOK_SECRET=your_buymeacoffee_webhook_secret
 ALLOWED_ORIGINS=*
 ```
 
@@ -147,12 +149,34 @@ Update the extension popup API base URL to that address.
 
 ## Access codes instead of Stripe
 
-This starter intentionally uses **manual access codes** rather than billing infrastructure. For a low-ticket, short-life product, this keeps costs and compliance surface area down.
+This starter intentionally uses **manual access codes** rather than a full billing stack. For a low-ticket, short-life product, this keeps costs and compliance surface area down.
 
 You can sell:
 - annual access manually,
 - invite codes to early users,
-- redemption codes delivered by Gumroad, Lemon Squeezy, or your own checkout later.
+- redemption codes delivered by Gumroad, Lemon Squeezy, or your own checkout later,
+- or a lightweight unlimited unlock through Buy Me a Coffee webhooks.
+
+## Buy Me a Coffee unlimited unlock
+
+You can offer a one-time **supporter** tier that unlocks unlimited usage when a Buy Me a Coffee webhook arrives for the same email address as the PromptPilot account.
+
+Setup:
+
+1. Set `BUYMEACOFFEE_PAGE_URL` to your public creator page.
+2. In Buy Me a Coffee, create a webhook that points to:
+
+```text
+https://your-worker.workers.dev/api/webhooks/buymeacoffee
+```
+
+3. Copy the Buy Me a Coffee webhook secret into `BUYMEACOFFEE_WEBHOOK_SECRET`.
+4. Subscribe to one-time support events at minimum. Buy Me a Coffee documents webhooks and signature verification here:
+   [Webhooks docs](https://studio.buymeacoffee.com/webhooks/docs)
+   [Webhook FAQ](https://help.buymeacoffee.com/en/articles/8210728-faq-on-webhooks)
+5. Tell users to donate with the same email they use in PromptPilot so the webhook can auto-match their account.
+
+The backend verifies the `x-signature-sha256` header using HMAC-SHA256, records webhook events for idempotency, and upgrades matched users to the `supporter` plan without overwriting any code-based plan underneath.
 
 ### Create an access code
 
@@ -183,11 +207,12 @@ Users can redeem a code in the extension popup after logging in.
 
 ## Default plans and limits
 
-The Worker enforces monthly usage caps:
+The Worker currently enforces:
 
-- `free` — 10 enhancements / month
+- `free` — 2 enhancements / day
 - `starter` — 120 enhancements / month
 - `pro` — 400 enhancements / month
+- `supporter` — unlimited
 
 Edit `backend/src/lib/plans.js` to change this.
 

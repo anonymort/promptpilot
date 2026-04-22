@@ -1,10 +1,20 @@
-import { isUniqueConstraintError, nowIso, startOfCurrentUtcMonthIso } from "./utils.js";
+import {
+  isUniqueConstraintError,
+  nowIso,
+  startOfCurrentUtcDayIso,
+  startOfCurrentUtcMonthIso
+} from "./utils.js";
 
 const STALE_RESERVATION_MS = 10 * 60 * 1000;
 
-export async function getMonthlyUsageCount(env, userId, now = new Date()) {
-  const periodStart = startOfCurrentUtcMonthIso(now);
-  await cleanupStaleUsageReservations(env, userId, now);
+function periodStartForWindow(window, now = new Date()) {
+  if (window === "day") return startOfCurrentUtcDayIso(now);
+  return startOfCurrentUtcMonthIso(now);
+}
+
+export async function getUsageCount(env, userId, window = "month", now = new Date()) {
+  const periodStart = periodStartForWindow(window, now);
+  await cleanupStaleUsageReservations(env, userId, window, now);
 
   const row = await env.DB.prepare(`
     SELECT COUNT(*) AS count
@@ -15,21 +25,25 @@ export async function getMonthlyUsageCount(env, userId, now = new Date()) {
   return Number(row?.count || 0);
 }
 
-export async function cleanupStaleUsageReservations(env, userId, now = new Date()) {
+export async function cleanupStaleUsageReservations(env, userId, window = "month", now = new Date()) {
   const staleBefore = new Date(now.getTime() - STALE_RESERVATION_MS).toISOString();
+  const periodStart = periodStartForWindow(window, now);
   await env.DB.prepare(`
     DELETE FROM usage_reservations
     WHERE user_id = ?
+      AND period_start = ?
       AND status = 'reserved'
       AND created_at < ?
-  `).bind(userId, staleBefore).run();
+  `).bind(userId, periodStart, staleBefore).run();
 }
 
-export async function reserveUsageSlot(env, userId, monthlyLimit, now = new Date()) {
-  const periodStart = startOfCurrentUtcMonthIso(now);
-  await cleanupStaleUsageReservations(env, userId, now);
+export async function reserveUsageSlot(env, userId, quota, now = new Date()) {
+  if (!quota || quota.limit === null) return null;
 
-  for (let slot = 1; slot <= monthlyLimit; slot += 1) {
+  const periodStart = periodStartForWindow(quota.window, now);
+  await cleanupStaleUsageReservations(env, userId, quota.window, now);
+
+  for (let slot = 1; slot <= quota.limit; slot += 1) {
     const reservationId = crypto.randomUUID();
 
     try {

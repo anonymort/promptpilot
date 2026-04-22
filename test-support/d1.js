@@ -84,5 +84,6 @@ export function createTestDb() {
   const db = new D1DatabaseAdapter();
   db.applyMigration("./backend/migrations/0001_init.sql");
   db.applyMigration("./backend/migrations/0002_usage_reservations_and_redemptions.sql");
+  db.applyMigration("./backend/migrations/0003_buymeacoffee_supporter_unlocks.sql");
   return db;
 }
