@@ -1,0 +1,15 @@
+{
+  "name": "promptpilot",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace backend",
+    "deploy": "npm run deploy --workspace backend",
+    "db:apply:local": "npm run db:apply:local --workspace backend",
+    "db:apply:remote": "npm run db:apply:remote --workspace backend",
+    "test": "node --test"
+  }
+}

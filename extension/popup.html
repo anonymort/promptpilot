@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PromptPilot Starter</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <h1>PromptPilot</h1>
+          <p class="muted">Review-first prompt enhancement</p>
+        </div>
+        <span id="authBadge" class="badge badge--muted">Signed out</span>
+      </header>
+
+      <section class="panel">
+        <label class="label" for="apiBase">API base URL</label>
+        <input id="apiBase" class="input" type="url" placeholder="https://your-worker.workers.dev" />
+        <div class="inline-row">
+          <button id="saveApiBaseBtn" class="button button--secondary" type="button">Save</button>
+          <span id="apiBaseStatus" class="muted"></span>
+        </div>
+      </section>
+
+      <section id="authSection" class="panel">
+        <div class="tabs">
+          <button id="showLoginBtn" class="tab is-active" type="button">Login</button>
+          <button id="showRegisterBtn" class="tab" type="button">Register</button>
+        </div>
+
+        <form id="loginForm" class="form">
+          <label class="label" for="loginEmail">Email</label>
+          <input id="loginEmail" class="input" type="email" autocomplete="username" required />
+          <label class="label" for="loginPassword">Password</label>
+          <input id="loginPassword" class="input" type="password" autocomplete="current-password" required />
+          <button class="button" type="submit">Login</button>
+        </form>
+
+        <form id="registerForm" class="form hidden">
+          <label class="label" for="registerEmail">Email</label>
+          <input id="registerEmail" class="input" type="email" autocomplete="username" required />
+          <label class="label" for="registerPassword">Password</label>
+          <input id="registerPassword" class="input" type="password" autocomplete="new-password" minlength="12" required />
+          <button class="button" type="submit">Register</button>
+        </form>
+      </section>
+
+      <section id="accountSection" class="panel hidden">
+        <div class="account-grid">
+          <div>
+            <div class="label">Email</div>
+            <div id="accountEmail" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Plan</div>
+            <div id="accountPlan" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Usage</div>
+            <div id="accountUsage" class="value">—</div>
+          </div>
+        </div>
+
+        <div class="spacer-sm"></div>
+
+        <label class="label" for="redeemCode">Redeem access code</label>
+        <div class="inline-row">
+          <input id="redeemCode" class="input" type="text" placeholder="BETA-ABCDEFGH" />
+          <button id="redeemBtn" class="button button--secondary" type="button">Redeem</button>
+        </div>
+
+        <div class="spacer-sm"></div>
+
+        <button id="logoutBtn" class="button button--danger" type="button">Logout</button>
+      </section>
+
+      <section class="panel">
+        <div class="account-grid">
+          <div>
+            <div class="label">Current site</div>
+            <div id="currentSite" class="value">—</div>
+          </div>
+          <div>
+            <div class="label">Mode</div>
+            <select id="mode" class="input">
+              <option value="general">General</option>
+              <option value="landing-page">Landing page</option>
+              <option value="dashboard">Dashboard</option>
+              <option value="mobile-ui">Mobile UI</option>
+              <option value="form-flow">Form flow</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="spacer-sm"></div>
+
+        <div class="inline-row">
+          <button id="readBtn" class="button button--secondary" type="button">Read focused field</button>
+          <button id="enhanceBtn" class="button" type="button">Enhance</button>
+          <button id="insertBtn" class="button button--secondary" type="button">Insert into page</button>
+        </div>
+
+        <div class="spacer-sm"></div>
+
+        <label class="label" for="sourcePrompt">Source prompt</label>
+        <textarea id="sourcePrompt" class="textarea" rows="5" placeholder="Read from page or paste here"></textarea>
+
+        <label class="label" for="enhancedPrompt">Enhanced prompt</label>
+        <textarea id="enhancedPrompt" class="textarea" rows="8" placeholder="Enhanced prompt will appear here"></textarea>
+      </section>
+
+      <p id="status" class="status muted">Ready.</p>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

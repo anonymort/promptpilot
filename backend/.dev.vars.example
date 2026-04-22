@@ -1,0 +1,5 @@
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-4-6
+USE_MOCK=true
+ADMIN_BEARER_TOKEN=replace-with-a-long-random-string
+ALLOWED_ORIGINS=*

@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+backend/node_modules/
+extension/node_modules/
+backend/.dev.vars
+backend/.wrangler/
+backend/.wrangler-state/
+backend/.dev.vars.local
+*.log

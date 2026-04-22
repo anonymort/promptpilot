@@ -1,0 +1,15 @@
+{
+  "name": "promptpilot-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:apply:local": "wrangler d1 migrations apply promptpilot-db --local",
+    "db:apply:remote": "wrangler d1 migrations apply promptpilot-db --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.13.2"
+  }
+}

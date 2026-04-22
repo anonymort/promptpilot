@@ -1,0 +1,192 @@
+:root {
+  color-scheme: light dark;
+  --bg: #111827;
+  --panel: #1f2937;
+  --panel-2: #111827;
+  --border: #374151;
+  --text: #f9fafb;
+  --muted: #9ca3af;
+  --primary: #2563eb;
+  --primary-2: #1d4ed8;
+  --danger: #b91c1c;
+  --danger-2: #991b1b;
+  --input: #0f172a;
+  --success: #065f46;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f4f6;
+    --panel: #ffffff;
+    --panel-2: #f9fafb;
+    --border: #d1d5db;
+    --text: #111827;
+    --muted: #6b7280;
+    --input: #ffffff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 420px;
+  margin: 0;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  padding: 14px;
+}
+
+.header,
+.inline-row,
+.account-grid,
+.tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.header {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.value {
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.input,
+.textarea,
+.button,
+.tab {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font: inherit;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 10px 11px;
+  background: var(--input);
+  color: var(--text);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.button,
+.tab {
+  padding: 9px 12px;
+  cursor: pointer;
+  background: var(--primary);
+  color: white;
+  border-color: transparent;
+}
+
+.button:hover,
+.tab:hover {
+  background: var(--primary-2);
+}
+
+.button--secondary,
+.tab {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.button--secondary:hover,
+.tab:hover {
+  background: var(--panel-2);
+}
+
+.button--danger {
+  background: var(--danger);
+}
+
+.button--danger:hover {
+  background: var(--danger-2);
+}
+
+.tab.is-active {
+  background: var(--primary);
+  color: white;
+  border-color: transparent;
+}
+
+.form.hidden,
+.hidden {
+  display: none;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+}
+
+.badge--muted {
+  color: var(--muted);
+  background: transparent;
+}
+
+.badge--ok {
+  background: rgba(6, 95, 70, 0.16);
+  color: #10b981;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.status {
+  margin: 0;
+  min-height: 20px;
+}
+
+.spacer-sm {
+  height: 8px;
+}
+
+.account-grid {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.inline-row {
+  align-items: center;
+  flex-wrap: wrap;
+}
