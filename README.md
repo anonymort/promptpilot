@@ -1,308 +1,116 @@
-# PromptPilot Starter
+# PromptPilot
 
-A reviewable, low-cost starter kit for a **prompt enhancement** browser extension and backend.
+PromptPilot is a browser extension for improving prompts before they go back into the page.
 
-This package deliberately avoids covert or deceptive behaviour. The extension never auto-submits, never silently rewrites text, and never runs on every site by default. The user must explicitly click to read the focused field, enhance it, review the result, and insert it back into the page.
+It is designed for people who already work inside tools like ChatGPT, Claude, and other prompt-driven products, but want a faster way to clean up rough instructions, sharpen intent, and rewrite messy drafts without leaving the tab they are on.
 
-## What is included
+## What it does
 
-- `backend/` — Cloudflare Worker + D1 backend
-- `extension/` — Chrome Manifest V3 extension using `activeTab`, `scripting`, and `storage`
-- `docs/` — architecture, deployment, and privacy guidance
+PromptPilot helps you:
 
-## Product shape
+- read the prompt from the field you are currently editing
+- rewrite it into a clearer, stronger version
+- review the result before using it
+- insert the improved version back into the page or copy it elsewhere
 
-The extension is a **user-invoked assistant**:
+The flow is intentionally manual and visible. PromptPilot does not silently rewrite text, auto-submit forms, or run on every site in the background.
 
-1. User focuses a prompt field on a supported site.
-2. User opens the extension popup and clicks **Read focused field**.
-3. The popup reads the currently focused editable field from the active tab.
-4. The popup sends the text to the backend.
-5. The backend rewrites the prompt using a hidden server-side prompt library.
-6. The user reviews the rewritten prompt in the popup.
-7. The user clicks **Insert into page**.
+## How the extension works
 
-There is no hidden interception, no auto-submit, and no invisible background rewriting.
+The popup follows a simple three-step workflow:
 
-## Quick start
+1. Click `Read from page` to capture the active editable field.
+2. Click `Enhance` to improve the prompt for the current site and mode.
+3. Review the result, then click `Insert into page` or `Copy result`.
 
-### 1) Backend prerequisites
+You can also skip step 1 and paste your own prompt directly into the popup.
 
-- Node.js 20+
-- A Cloudflare account
-- Wrangler CLI access via `npx wrangler`
-- An Anthropic API key for production mode
+## Why people use it
 
-### 2) Create the D1 database
+PromptPilot is useful when you want to:
 
-From `backend/`:
+- turn a vague request into something more specific
+- tighten a long, rambling prompt
+- rewrite rough instructions into a cleaner structure
+- adapt a prompt for UI, landing page, dashboard, mobile, or form-related work
+- keep your original workflow inside the site you are already using
 
-```bash
-npm install
-npx wrangler login
-npx wrangler d1 create promptpilot-db
-```
+## Enhancement modes
 
-Cloudflare will print a `database_id`. Paste that into `backend/wrangler.toml` for both `database_id` and, if you want local dev, set a `preview_database_id` string.
+PromptPilot currently includes these modes:
 
-Example:
+- `General`
+- `Landing page`
+- `Dashboard`
+- `Mobile UI`
+- `Form flow`
 
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "promptpilot-db"
-database_id = "PASTE_REAL_UUID_HERE"
-preview_database_id = "promptpilot-db-preview"
-```
+These modes help shape the rewrite toward the kind of output you are trying to get.
 
-### 3) Configure local secrets
+## Accounts and usage
 
-Copy the example file:
+PromptPilot uses account-based usage limits.
 
-```bash
-cp .dev.vars.example .dev.vars
-```
+Current limits:
 
-Edit `.dev.vars`:
+- `Free`: 2 enhancements per day
+- `Starter`: 120 enhancements per month
+- `Pro`: 400 enhancements per month
+- `Supporter`: unlimited
 
-```bash
-ANTHROPIC_API_KEY=your_key_here
-ANTHROPIC_MODEL=claude-sonnet-4-6
-USE_MOCK=false
-ADMIN_BEARER_TOKEN=choose-a-long-random-admin-token
-BUYMEACOFFEE_PAGE_URL=https://buymeacoffee.com/your-page
-BUYMEACOFFEE_WEBHOOK_SECRET=your_buymeacoffee_webhook_secret
-ALLOWED_ORIGINS=*
-```
+The popup shows your current plan and usage so you can see where you stand at a glance.
 
-Notes:
+## Supporter unlock
 
-- Set `USE_MOCK=true` if you want to run the full flow without calling Anthropic.
-- `ALLOWED_ORIGINS=*` is acceptable here because the API uses bearer tokens rather than cookies. Tighten this later if you move to a fixed extension ID.
+PromptPilot also supports a simple supporter unlock through Buy Me a Coffee.
 
-### 4) Apply migrations
+If you donate using the same email address as your PromptPilot account, unlimited usage can be unlocked automatically on that account.
 
-Run locally first:
+Buy Me a Coffee:
 
-```bash
-npx wrangler d1 migrations apply promptpilot-db --local
-```
+- [buymeacoffee.com/mattkneale](https://buymeacoffee.com/mattkneale)
 
-Then apply to the remote database:
+## What PromptPilot does not do
 
-```bash
-npx wrangler d1 migrations apply promptpilot-db
-```
+PromptPilot is deliberately conservative about browser access.
 
-### 5) Start local development
+It does not:
 
-```bash
-npm run dev
-```
+- auto-send prompts for you
+- rewrite text invisibly
+- scrape every page in the background
+- submit forms without your action
 
-The Worker will start locally, usually on:
+You stay in control of what gets read, enhanced, copied, and inserted.
 
-```text
-http://127.0.0.1:8787
-```
+## Who it is for
 
-### 6) Load the extension
+PromptPilot is a good fit for:
 
-- Open `chrome://extensions`
-- Enable **Developer mode**
-- Click **Load unpacked**
-- Select the `extension/` folder
+- people who prompt AI tools every day
+- designers and product builders refining UI requests
+- marketers shaping landing page instructions
+- founders and indie hackers iterating quickly
+- anyone who wants better prompts without breaking flow
 
-### 7) Point the extension at your backend
+## Current status
 
-- Click the extension icon
-- Set **API base URL** to your backend URL, for example:
-  - Local: `http://127.0.0.1:8787`
-  - Production: `https://promptpilot-api.your-subdomain.workers.dev`
+PromptPilot is an early-stage browser extension and backend project under active development.
 
-### 8) Create a user
+The experience is already usable, but parts of the product are still evolving, including onboarding, billing, polish, and browser distribution.
 
-From the extension popup:
+## Project structure
 
-- Register with email and password
-- Or register, then redeem an access code after login
+If you are browsing the repository, the main parts are:
 
-You can also create paid beta access codes with the admin endpoint. See below.
+- `extension/` — the browser extension popup and client logic
+- `backend/` — the API that handles accounts, plans, usage, and prompt enhancement
+- `docs/` — supporting notes and internal documentation
 
-## Deployment
+## For developers
 
-### Deploy the backend
+This README is intentionally product-facing. If you are looking for implementation details, deployment notes, or architecture docs, start in:
 
-From `backend/`:
-
-```bash
-npm run deploy
-```
-
-You will get a production Worker URL such as:
-
-```text
-https://promptpilot-api.<your-subdomain>.workers.dev
-```
-
-Update the extension popup API base URL to that address.
-
-## Access codes instead of Stripe
-
-This starter intentionally uses **manual access codes** rather than a full billing stack. For a low-ticket, short-life product, this keeps costs and compliance surface area down.
-
-You can sell:
-- annual access manually,
-- invite codes to early users,
-- redemption codes delivered by Gumroad, Lemon Squeezy, or your own checkout later,
-- or a lightweight unlimited unlock through Buy Me a Coffee webhooks.
-
-## Buy Me a Coffee unlimited unlock
-
-You can offer a one-time **supporter** tier that unlocks unlimited usage when a Buy Me a Coffee webhook arrives for the same email address as the PromptPilot account.
-
-Setup:
-
-1. Set `BUYMEACOFFEE_PAGE_URL` to your public creator page.
-2. In Buy Me a Coffee, create a webhook that points to:
-
-```text
-https://your-worker.workers.dev/api/webhooks/buymeacoffee
-```
-
-3. Copy the Buy Me a Coffee webhook secret into `BUYMEACOFFEE_WEBHOOK_SECRET`.
-4. Subscribe to one-time support events at minimum. Buy Me a Coffee documents webhooks and signature verification here:
-   [Webhooks docs](https://studio.buymeacoffee.com/webhooks/docs)
-   [Webhook FAQ](https://help.buymeacoffee.com/en/articles/8210728-faq-on-webhooks)
-5. Tell users to donate with the same email they use in PromptPilot so the webhook can auto-match their account.
-
-The backend verifies the `x-signature-sha256` header using HMAC-SHA256, records webhook events for idempotency, and upgrades matched users to the `supporter` plan without overwriting any code-based plan underneath.
-
-### Create an access code
-
-Call the admin endpoint with your `ADMIN_BEARER_TOKEN`:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/admin/codes   -H "Content-Type: application/json"   -H "Authorization: Bearer YOUR_ADMIN_BEARER_TOKEN"   -d '{
-    "plan": "starter",
-    "months": 12,
-    "count": 5,
-    "prefix": "BETA"
-  }'
-```
-
-Response example:
-
-```json
-{
-  "ok": true,
-  "codes": [
-    "BETA-7F7Q7D6A",
-    "BETA-8P4J1C2M"
-  ]
-}
-```
-
-Users can redeem a code in the extension popup after logging in.
-
-## Default plans and limits
-
-The Worker currently enforces:
-
-- `free` — 2 enhancements / day
-- `starter` — 120 enhancements / month
-- `pro` — 400 enhancements / month
-- `supporter` — unlimited
-
-Edit `backend/src/lib/plans.js` to change this.
-
-## Supported enhancement modes
-
-The backend currently supports:
-
-- `general`
-- `landing-page`
-- `dashboard`
-- `mobile-ui`
-- `form-flow`
-
-These are only server-side. They are not shipped inside the extension.
-
-## Local API smoke test
-
-Register:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/auth/register   -H "Content-Type: application/json"   -d '{"email":"test@example.com","password":"correct horse battery staple"}'
-```
-
-Login:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/auth/login   -H "Content-Type: application/json"   -d '{"email":"test@example.com","password":"correct horse battery staple"}'
-```
-
-Enhance:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/enhance   -H "Content-Type: application/json"   -H "Authorization: Bearer YOUR_SESSION_TOKEN"   -d '{
-    "site": "stitch",
-    "mode": "landing-page",
-    "prompt": "pricing page for a B2B SaaS startup"
-  }'
-```
-
-## File map
-
-```text
-promptpilot-starter/
-├── README.md
-├── backend/
-│   ├── package.json
-│   ├── wrangler.toml
-│   ├── .dev.vars.example
-│   ├── migrations/
-│   │   └── 0001_init.sql
-│   └── src/
-│       ├── index.js
-│       └── lib/
-│           ├── anthropic.js
-│           ├── auth.js
-│           ├── cors.js
-│           ├── plans.js
-│           ├── prompts.js
-│           └── utils.js
-├── extension/
-│   ├── manifest.json
-│   ├── popup.html
-│   ├── popup.css
-│   ├── popup.js
-│   └── icons/
-└── docs/
-    ├── architecture.md
-    ├── deployment.md
-    └── privacy-policy-template.md
-```
-
-## Production notes
-
-This is a deliberate MVP. Before real volume, you should add:
-
-- email verification
-- password reset
-- bot protection on registration
-- payment provider integration
-- abuse detection
-- stricter origin allowlists
-- structured analytics
-- legal pages and support workflow
-
-## What this starter does not do
-
-- It does not pretend to be an official integration.
-- It does not bypass site controls.
-- It does not auto-submit prompts.
-- It does not use hidden background automation.
-- It does not fingerprint devices.
-
-That is intentional.
+- [docs](/Users/matt/Coding/promptpilot/docs)
+- [backend](/Users/matt/Coding/promptpilot/backend)
+- [extension](/Users/matt/Coding/promptpilot/extension)
